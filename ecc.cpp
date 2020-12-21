@@ -11,11 +11,14 @@ namespace neo3crypto {
     }
 
     static uECC_Curve get_uecc_curve(const ECCCURVE curve) {
-        static std::unordered_map<const ECCCURVE, const uECC_Curve> curves = {
-            {ECCCURVE::secp256r1, uECC_secp256r1()},
-            {ECCCURVE::secp256k1, uECC_secp256k1()}
-        };
-        return curves.at(curve);
+        switch (curve) {
+            case ECCCURVE::secp256r1:
+                return uECC_secp256r1();
+            case ::neo3crypto::ECCCURVE::secp256k1:
+                return uECC_secp256k1();
+            default:
+                throw ECCException("Unsupported curve");
+        }
     }
 
     KeyPair KeyPair::generate(ECCCURVE curve) {
