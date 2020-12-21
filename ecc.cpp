@@ -10,13 +10,16 @@ namespace neo3crypto {
         return std::vector<unsigned char>(data, data + size);
     }
 
-    static const std::unordered_map<const ECCCURVE, const uECC_Curve> curves = {
+    static uECC_Curve get_uecc_curve(const ECCCURVE curve) {
+        static std::unordered_map<const ECCCURVE, const uECC_Curve> curves = {
             {ECCCURVE::secp256r1, uECC_secp256r1()},
             {ECCCURVE::secp256k1, uECC_secp256k1()}
-    };
+        };
+        return curves.at(curve);
+    }
 
     KeyPair KeyPair::generate(ECCCURVE curve) {
-        uECC_Curve internal_curve = curves.at(curve);
+        uECC_Curve internal_curve = get_uecc_curve(curve);
         auto curve_size = uECC_curve_private_key_size(internal_curve);
 
         std::vector<unsigned char> public_key(curve_size * 2);
@@ -34,7 +37,7 @@ namespace neo3crypto {
     ECPoint::ECPoint(std::vector<unsigned char> compressed_public_key, ECCCURVE curve, bool validate) :
             curve{curve} {
 
-        auto internal_curve = curves.at(curve);
+        auto internal_curve = get_uecc_curve(curve);
         auto curve_size = uECC_curve_private_key_size(internal_curve);
 
         value = std::vector<unsigned char>(curve_size * 2, 0);
@@ -59,7 +62,7 @@ namespace neo3crypto {
     }
 
     ECPoint::ECPoint(const std::vector<unsigned char>& private_key, ECCCURVE curve) : curve{curve} {
-        auto internal_curve = curves.at(curve);
+        auto internal_curve = get_uecc_curve(curve);
         int curve_size = uECC_curve_private_key_size(internal_curve);
 
         if (curve_size != private_key.size()) {
@@ -107,7 +110,7 @@ namespace neo3crypto {
     }
 
     std::vector<unsigned char> ECDSA::sign(const std::vector<unsigned char>& private_key, const std::vector<unsigned char>& message_hash) const {
-        auto internal_curve = curves.at(curve);
+        auto internal_curve = get_uecc_curve(curve);
         auto curve_size = uECC_curve_private_key_size(internal_curve);
         std::vector<unsigned char> signature(curve_size * 2);
         uECC_sign(private_key.data(), message_hash.data(), message_hash.size(), signature.data(), internal_curve);
@@ -120,7 +123,7 @@ namespace neo3crypto {
                                   message_hash.data(),
                                   message_hash.size(),
                                   signature.data(),
-                                  curves.at(public_key.curve));
+                                  get_uecc_curve(public_key.curve));
         return static_cast<bool>(result);
     }
 }
