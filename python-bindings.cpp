@@ -45,9 +45,9 @@ PYBIND11_MODULE(neo3crypto, m) {
             .value("SECP256K1", ECCCURVE::secp256k1);
 
     py::class_<ECPoint>(m, "ECPoint", py::multiple_inheritance())
-            .def(py::init([](const py::bytes& compressed_public_key, ECCCURVE curve, bool validate) {
-                return ECPoint(to_vector(compressed_public_key), curve, validate);
-            }), py::arg("compressed_public_key"), py::arg("curve"), py::arg("validate"))
+            .def(py::init([](const py::bytes& public_key, ECCCURVE curve, bool validate) {
+                return ECPoint(to_vector(public_key), curve, validate);
+            }), py::arg("public_key"), py::arg("curve"), py::arg("validate"))
             .def(py::init([](const py::bytes& private_key, ECCCURVE curve) {
                 return ECPoint(to_vector(private_key), curve);
             }), py::arg("private_key"), py::arg("curve"))
@@ -77,35 +77,30 @@ PYBIND11_MODULE(neo3crypto, m) {
             .def("encode_point", [](ECPoint& self, bool compressed) {
                 return to_bytes(self.encode_point(compressed));
                 }, py::arg("compressed") = true)
+            .def("from_bytes", [](ECPoint& self, const py::bytes& compressed_public_key, ECCCURVE curve, bool validate) {
+                self.from_bytes(to_vector(compressed_public_key), curve, validate);
+            }, R"(Configure self from bytes data)", py::arg("compressed_public_key"), py::arg("curve"), py::arg("validate"))
             .def_readonly("curve", &ECPoint::curve)
             .def_property_readonly("is_infinity", &ECPoint::is_infinity)
             .def("__lt__", [](ECPoint& self, ECPoint& other) { return self < other; })
             .def("__le__", [](ECPoint& self, ECPoint& other) { return self <= other; })
             .def("__eq__", [](ECPoint& self, ECPoint& other) { return self == other; })
             .def("__gt__", [](ECPoint& self, ECPoint& other) { return self > other; })
-            .def("__ge__", [](ECPoint& self, ECPoint& other) { return self >= other; });
+            .def("__ge__", [](ECPoint& self, ECPoint& other) { return self >= other; })
+            .def("__len__", [](ECPoint& self) {
+                if (self.is_infinity()) return 1;
+                return static_cast<int>(self.value_compressed.size());
+            });
 
-    py::class_<KeyPair>(m, "KeyPair")
-            .def(py::init([](const py::bytes& private_key, ECPoint public_key) {
-                return KeyPair(to_vector(private_key), std::move(public_key));
-            }), py::arg("private_key"), py::arg("public_key"))
-            .def(py::init([](const py::bytes& private_key, ECCCURVE curve) {
-                return KeyPair(to_vector(private_key), curve);
-            }), py::arg("private_key"), py::arg("public_key"))
-            .def_static("generate", &KeyPair::generate, py::arg("curve"))
-            .def_property_readonly("public_key", [](KeyPair& self) { return self.public_key; })
-            .def_property_readonly("private_key", [](KeyPair& self) { return to_bytes(self.private_key); });
+    m.def("sign", [](const py::bytes& private_key, const py::bytes& message, ECCCURVE curve, py::function hash_func) {
+        auto hash_result = hash_func(message).attr("digest")();
+        auto message_hash = to_vector(hash_result);
+        return to_bytes(sign(to_vector(private_key), message_hash, curve));
+    }, py::arg("private_key"), py::arg("message"), py::arg("curve"), py::arg("hash_func"));
 
-    py::class_<ECDSA>(m, "ECDSA")
-            .def(py::init<ECCCURVE, py::function>(), py::arg("curve"), py::arg("hash_func"))
-            .def("sign", [](ECDSA& self, const py::bytes& private_key, const py::bytes& message) {
-                auto hash_result = self.hash_func(message).attr("digest")();
-                auto message_hash = to_vector(hash_result);
-                return to_bytes(self.sign(to_vector(private_key), message_hash));
-            }, py::arg("private_key"), py::arg("message"))
-            .def("verify", [](ECDSA& self, const py::bytes& signature, const py::bytes& message, const ECPoint& public_key) {
-                auto hash_result = self.hash_func(message).attr("digest")();
-                auto message_hash = to_vector(hash_result);
-                return self.verify(to_vector(signature), message_hash, public_key);
-            }, py::arg("signature"), py::arg("message"), py::arg("public_key"));
+    m.def("verify", [](const py::bytes& signature, const py::bytes& message, const ECPoint& public_key, const py::function& hash_func) {
+        auto hash_result = hash_func(message).attr("digest")();
+        auto message_hash = to_vector(hash_result);
+        return verify(to_vector(signature), message_hash, public_key);
+    }, py::arg("signature"), py::arg("message"), py::arg("public_key"),  py::arg("hash_func"));
 }

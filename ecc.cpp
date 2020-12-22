@@ -21,42 +21,34 @@ namespace neo3crypto {
         }
     }
 
-    KeyPair KeyPair::generate(ECCCURVE curve) {
-        uECC_Curve internal_curve = get_uecc_curve(curve);
-        auto curve_size = uECC_curve_private_key_size(internal_curve);
-
-        std::vector<unsigned char> public_key(curve_size * 2);
-        std::vector<unsigned char> public_key_compressed(curve_size + 1);
-        std::vector<unsigned char> private_key(curve_size);
-
-        if (uECC_make_key(public_key.data(), private_key.data(), internal_curve)) {
-            uECC_compress(public_key.data(), public_key_compressed.data(), internal_curve);
-            return {private_key, ECPoint(public_key, public_key_compressed, curve)};
-        }
-        else
-            throw ECCException("Failed keypair generation");
-    }
-
-    ECPoint::ECPoint(std::vector<unsigned char> compressed_public_key, ECCCURVE curve, bool validate) :
-            curve{curve} {
-
-        auto internal_curve = get_uecc_curve(curve);
+    ECPoint::ECPoint(std::vector<unsigned char> public_key, ECCCURVE curve_, bool validate) : curve{curve_} {
+        if (public_key.empty())
+            throw ECCException("Public key has no data");
+        auto internal_curve = get_uecc_curve(curve_);
         auto curve_size = uECC_curve_private_key_size(internal_curve);
 
         value = std::vector<unsigned char>(curve_size * 2, 0);
 
-        if (compressed_public_key.size() == 1 && compressed_public_key[0] == 0) {
+        if (public_key.size() == 1 && public_key[0] == 0) {
             _is_infinity = true;
             value_compressed = std::vector<unsigned char>(curve_size * 2, 0);
             return;
-        } else {
-            if (compressed_public_key.size() != (curve_size + 1)) {
-                throw ECCException("Incorrect public key length for curve.");
-            }
-            value_compressed = std::move(compressed_public_key);
         }
 
-        uECC_decompress(value_compressed.data(), value.data(), internal_curve);
+        if (public_key[0] == 0x2 || public_key[0] == 0x3) {
+            if (public_key.size() != (curve_size + 1)) {
+                throw ECCException("Incorrect public key length for specified curve.");
+            }
+            value_compressed = std::move(public_key);
+
+            uECC_decompress(value_compressed.data(), value.data(), internal_curve);
+        } else if (public_key[0] == 0x4) {
+            // key is in uncompressed format, store it without the prefix
+            std::copy(public_key.begin() + 1, public_key.end(), value.begin());
+            value_compressed = std::vector<unsigned char>(curve_size + 1, 0);
+            uECC_compress(value.data(), value_compressed.data(), internal_curve);
+        }
+
         if (validate) {
             if (!uECC_valid_public_key(value.data(), internal_curve)) {
                 throw ECCException("Failed public key validation");
@@ -64,12 +56,12 @@ namespace neo3crypto {
         }
     }
 
-    ECPoint::ECPoint(const std::vector<unsigned char>& private_key, ECCCURVE curve) : curve{curve} {
+    ECPoint::ECPoint(const std::vector<unsigned char>& private_key, ECCCURVE curve_) : curve{curve_} {
         auto internal_curve = get_uecc_curve(curve);
         int curve_size = uECC_curve_private_key_size(internal_curve);
 
         if (curve_size != private_key.size()) {
-            throw ECCException("Incorrect private key length for curve");
+            throw ECCException("Incorrect private key length for specified curve");
         }
 
         value = std::vector<unsigned char>(curve_size * 2);
@@ -112,21 +104,65 @@ namespace neo3crypto {
         return uncompressed;
     }
 
-    std::vector<unsigned char> ECDSA::sign(const std::vector<unsigned char>& private_key, const std::vector<unsigned char>& message_hash) const {
+    void ECPoint::from_bytes(std::vector<unsigned char> public_key, ECCCURVE curve_, bool validate) {
+        if (public_key.empty())
+            throw ECCException("Public key has no data");
+
+        auto internal_curve = get_uecc_curve(curve_);
+        auto curve_size = uECC_curve_private_key_size(internal_curve);
+
+        value = std::vector<unsigned char>(curve_size * 2, 0);
+
+        if (public_key.size() == 1 && public_key[0] == 0) {
+            _is_infinity = true;
+            value_compressed = std::vector<unsigned char>(curve_size * 2, 0);
+            return;
+        }
+
+        _is_infinity = false;
+        if (public_key[0] == 0x2 || public_key[0] == 0x3) {
+            if (public_key.size() != (curve_size + 1)) {
+                throw ECCException("Incorrect public key length for specified curve.");
+            }
+            value_compressed = std::move(public_key);
+
+            uECC_decompress(value_compressed.data(), value.data(), internal_curve);
+        } else if (public_key[0] == 0x4) {
+            // key is in uncompressed format, store it without the prefix
+            std::copy(public_key.begin() + 1, public_key.end(), value.begin());
+            value_compressed = std::vector<unsigned char>(curve_size + 1, 0);
+            uECC_compress(value.data(), value_compressed.data(), internal_curve);
+        }
+
+        if (validate) {
+            if (!uECC_valid_public_key(value.data(), internal_curve)) {
+                throw ECCException("Failed public key validation");
+            }
+        }
+    }
+
+    std::vector<unsigned char> sign(const std::vector<unsigned char>& private_key, const std::vector<unsigned char>& message_hash, ECCCURVE curve) {
         auto internal_curve = get_uecc_curve(curve);
         auto curve_size = uECC_curve_private_key_size(internal_curve);
+        if (private_key.size() != curve_size)
+            throw ECCException("Incorrect private key length for specified curve.");
+
         std::vector<unsigned char> signature(curve_size * 2);
         uECC_sign(private_key.data(), message_hash.data(), message_hash.size(), signature.data(), internal_curve);
         return signature;
     }
 
-    bool ECDSA::verify(const std::vector<unsigned char>& signature, const std::vector<unsigned char>& message_hash,
+    bool verify(const std::vector<unsigned char>& signature, const std::vector<unsigned char>& message_hash,
                        ECPoint public_key) {
+        auto internal_curve = get_uecc_curve(public_key.curve);
+        auto curve_size = uECC_curve_private_key_size(internal_curve);
+        if (signature.size() != curve_size * 2)
+            throw ECCException("Incorrect signature length for specified curve.");
         auto result = uECC_verify(public_key.value.data(),
                                   message_hash.data(),
                                   message_hash.size(),
                                   signature.data(),
-                                  get_uecc_curve(public_key.curve));
+                                  internal_curve);
         return static_cast<bool>(result);
     }
 }

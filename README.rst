@@ -24,13 +24,16 @@ Usage
 ::
 
     import hashlib
-    from neo3crypto import ECCCurve, KeyPair, ECDSA
+    import os
+    from neo3crypto import ECCCurve, ECPoint, sign, verify
 
-    kp = KeyPair.generate(ECCCurve.SECP256R1)
-    ecdsa = ECDSA(ECCCurve.SECP256R1, hashlib.sha256)
 
-    signature = ecdsa.sign(kp.private_key, b'message')
-    assert ecdsa.verify(signature, b'message', kp.public_key) == True
+    curve = ECCCurve.SECP256R1
+    private_key = os.urandom(32)
+    public_key = ECPoint(private_key, curve)
+
+    signature = sign(private_key, b'message', curve, hashlib.sha256)
+    assert ecdsa.verify(signature, b'message', public_key, hashlib.sha256) == True
 
 Any hashlib hashing function can be used. Further documentation on the classes can be queried from the extension module
 using ``help(neo3crypto)``.
